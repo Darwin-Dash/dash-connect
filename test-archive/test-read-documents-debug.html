@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dash Platform Document Reader - Debug</title>
+  <style>
+    body {
+      font-family: -apple-system, system-ui, sans-serif;
+      max-width: 800px;
+      margin: 40px auto;
+      padding: 20px;
+    }
+    .log {
+      background: #f5f5f5;
+      padding: 15px;
+      border-radius: 4px;
+      margin: 10px 0;
+      font-family: monospace;
+      white-space: pre-wrap;
+      max-height: 600px;
+      overflow-y: auto;
+    }
+    .success { color: green; font-weight: bold; }
+    .error { color: red; }
+    .info { color: blue; }
+    .debug { color: purple; }
+    .document {
+      background: white;
+      border: 1px solid #ddd;
+      padding: 10px;
+      margin: 10px 0;
+      border-radius: 4px;
+    }
+    button {
+      background: #5c6bc0;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      font-size: 16px;
+      cursor: pointer;
+      margin: 5px;
+    }
+    button:hover {
+      background: #3f51b5;
+    }
+    input[type="text"] {
+      padding: 8px;
+      font-size: 16px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      margin: 5px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Dash Platform Document Reader - Debug</h1>
+  <p>Read messages from the Dash Platform testnet with detailed timestamp debugging.</p>
+  
+  <div>
+    <button onclick="readDocuments()">Read Latest Documents</button>
+    <input type="text" id="searchText" placeholder="Search for message...">
+    <button onclick="searchDocuments()">Search</button>
+    <button onclick="clearLog()">Clear</button>
+    <button onclick="copyLogsToClipboard()">Copy Logs</button>
+  </div>
+  
+  <div id="log" class="log">Ready to read documents...</div>
+
+  <script>
+    // Use the extension's SDK for reading
+    let sdk = null;
+    
+    // Wait for extension to be available
+    function waitForExtension() {
+      if (window.dashPlatformSDK) {
+        sdk = window.dashPlatformSDK;
+        log('✅ Extension SDK ready', 'success');
+        readDocuments();
+      } else {
+        log('⏳ Waiting for extension...', 'info');
+        setTimeout(waitForExtension, 500);
+      }
+    }
+
+    function log(msg, type = '') {
+      const logDiv = document.getElementById('log');
+      const time = new Date().toTimeString().split(' ')[0];
+      const className = type ? ` class="${type}"` : '';
+      logDiv.innerHTML += `\n<span${className}>[${time}] ${msg}</span>`;
+      console.log(msg);
+    }
+
+    function clearLog() {
+      document.getElementById('log').innerHTML = 'Ready to read documents...';
+    }
+
+    function copyLogsToClipboard() {
+      const logDiv = document.getElementById('log');
+      const textContent = logDiv.textContent || logDiv.innerText;
+      
+      navigator.clipboard.writeText(textContent).then(() => {
+        // Show success feedback
+        const originalText = logDiv.innerHTML;
+        log('\n✅ Logs copied to clipboard!', 'success');
+        
+        // Remove success message after 2 seconds
+        setTimeout(() => {
+          const currentText = logDiv.innerHTML;
+          if (currentText.includes('✅ Logs copied to clipboard!')) {
+            logDiv.innerHTML = currentText.replace(/\n<span[^>]*>\[[^\]]+\] ✅ Logs copied to clipboard!<\/span>/, '');
+          }
+        }, 2000);
+      }).catch(err => {
+        log('\n❌ Failed to copy logs: ' + err.message, 'error');
+      });
+    }
+
+    function formatDocument(doc, index) {
+      try {
+        const id = doc.getId().base58();
+        const ownerId = doc.getOwnerId().base58();
+        const props = doc.getProperties();
+        const createdAt = doc.getCreatedAt();
+        const updatedAt = doc.getUpdatedAt();
+        
+        // Debug logging for timestamps
+        log(`\n🔍 DEBUG Document ${index + 1}:`, 'debug');
+        log(`  - createdAt raw value: ${createdAt}`, 'debug');
+        log(`  - createdAt type: ${typeof createdAt}`, 'debug');
+        log(`  - updatedAt raw value: ${updatedAt}`, 'debug');
+        log(`  - updatedAt type: ${typeof updatedAt}`, 'debug');
+        
+        // Try different timestamp handling approaches
+        let createdDate = 'Unknown';
+        let updatedDate = 'Unknown';
+        
+        if (createdAt !== null && createdAt !== undefined) {
+          // Log the raw value details
+          log(`  - createdAt value details: ${JSON.stringify(createdAt)}`, 'debug');
+          
+          // Try different conversions
+          if (typeof createdAt === 'bigint') {
+            // Handle BigInt
+            const timestamp = Number(createdAt);
+            log(`  - Converted BigInt to number: ${timestamp}`, 'debug');
+            createdDate = new Date(timestamp).toLocaleString();
+          } else if (typeof createdAt === 'number') {
+            // Check if it's seconds or milliseconds
+            const timestamp = createdAt < 10000000000 ? createdAt * 1000 : createdAt;
+            log(`  - Using timestamp: ${timestamp} (${createdAt < 10000000000 ? 'converted from seconds' : 'already milliseconds'})`, 'debug');
+            createdDate = new Date(timestamp).toLocaleString();
+          } else if (typeof createdAt === 'object' && createdAt !== null) {
+            // It might be a WASM object with methods
+            log(`  - createdAt is an object, checking for methods...`, 'debug');
+            log(`  - Object keys: ${Object.keys(createdAt).join(', ')}`, 'debug');
+            
+            // Try to call various possible methods
+            if (typeof createdAt.toNumber === 'function') {
+              const timestamp = createdAt.toNumber();
+              log(`  - Called toNumber(): ${timestamp}`, 'debug');
+              createdDate = new Date(timestamp).toLocaleString();
+            } else if (typeof createdAt.valueOf === 'function') {
+              const timestamp = createdAt.valueOf();
+              log(`  - Called valueOf(): ${timestamp}`, 'debug');
+              createdDate = new Date(timestamp).toLocaleString();
+            } else if (typeof createdAt.toString === 'function') {
+              const str = createdAt.toString();
+              log(`  - Called toString(): ${str}`, 'debug');
+              const timestamp = parseInt(str);
+              if (!isNaN(timestamp)) {
+                createdDate = new Date(timestamp).toLocaleString();
+              }
+            }
+          }
+        }
+        
+        // Check message for embedded timestamp
+        if (props.message && props.message.includes(' ')) {
+          const parts = props.message.split(' ');
+          const lastPart = parts[parts.length - 1];
+          if (/^\d{13}$/.test(lastPart)) {
+            log(`  - Found timestamp in message: ${lastPart}`, 'debug');
+            const msgDate = new Date(parseInt(lastPart)).toLocaleString();
+            log(`  - Message timestamp converts to: ${msgDate}`, 'debug');
+          }
+        }
+        
+        return `<div class="document">
+  <strong>Document ID:</strong> ${id}
+  <strong>Owner:</strong> ${ownerId.substring(0, 10)}...${ownerId.substring(ownerId.length - 10)}
+  <strong>Created:</strong> ${createdDate}
+  <strong>Updated:</strong> ${updatedDate}
+  <strong>Message:</strong> "${props.message || 'No message'}"
+</div>`;
+      } catch (error) {
+        return `<div class="document error">Error formatting document: ${error.message}</div>`;
+      }
+    }
+
+    async function readDocuments() {
+      if (!sdk) {
+        log('Extension not ready yet!', 'error');
+        return;
+      }
+      
+      clearLog();
+      log('Reading latest documents from Dash Platform...', 'info');
+      
+      const contractId = '5TShWDTorV1TXXBsQ5Xo1zAzYt9w2LstgbcB8J4SKifF';
+      
+      try {
+        // Query for documents
+        log('Querying data contract...', 'info');
+        const documents = await sdk.documents.query(
+          contractId,
+          'note',
+          [],      // No where clause - get all
+          null,    // No specific order
+          20       // Limit to 20 documents
+        );
+        
+        log(`✅ Found ${documents.length} documents`, 'success');
+        
+        if (documents.length === 0) {
+          log('No documents found in this contract.', 'info');
+          return;
+        }
+        
+        // Debug first document structure
+        if (documents.length > 0) {
+          log('\n📋 First document structure:', 'debug');
+          const firstDoc = documents[0];
+          
+          // Check available methods
+          log('Available methods on document:', 'debug');
+          const methods = [];
+          for (let key in firstDoc) {
+            if (typeof firstDoc[key] === 'function') {
+              methods.push(key);
+            }
+          }
+          log(`  - Methods: ${methods.join(', ')}`, 'debug');
+          
+          // Try to inspect the document
+          try {
+            if (typeof firstDoc.toJSON === 'function') {
+              log(`  - toJSON(): ${JSON.stringify(firstDoc.toJSON(), null, 2)}`, 'debug');
+            }
+          } catch (e) {
+            log(`  - toJSON() error: ${e.message}`, 'debug');
+          }
+        }
+        
+        // Sort by creation date (newest first) if possible
+        const sorted = documents.sort((a, b) => {
+          const aTime = a.getCreatedAt() || 0;
+          const bTime = b.getCreatedAt() || 0;
+          return bTime - aTime;
+        });
+        
+        log('\nDocuments (newest first):', 'info');
+        sorted.forEach((doc, index) => {
+          log(formatDocument(doc, index));
+        });
+        
+      } catch (error) {
+        log(`\n❌ Error: ${error.message}`, 'error');
+        
+        if (error.message.includes('UNAVAILABLE')) {
+          log('Could not connect to Dash Platform network.', 'error');
+          log('Please check your internet connection and try again.', 'error');
+        }
+      }
+    }
+
+    async function searchDocuments() {
+      if (!sdk) {
+        log('Extension not ready yet!', 'error');
+        return;
+      }
+      
+      const searchText = document.getElementById('searchText').value.trim();
+      if (!searchText) {
+        log('Please enter text to search for.', 'error');
+        return;
+      }
+      
+      clearLog();
+      log(`Searching for documents containing: "${searchText}"...`, 'info');
+      
+      const contractId = '5TShWDTorV1TXXBsQ5Xo1zAzYt9w2LstgbcB8J4SKifF';
+      
+      try {
+        // Get all documents (platform doesn't support text search yet)
+        const documents = await sdk.documents.query(
+          contractId,
+          'note',
+          [],
+          null,
+          100  // Get more documents for searching
+        );
+        
+        // Filter documents that contain the search text
+        const filtered = documents.filter(doc => {
+          const props = doc.getProperties();
+          return props.message && props.message.toLowerCase().includes(searchText.toLowerCase());
+        });
+        
+        log(`✅ Found ${filtered.length} matching documents`, 'success');
+        
+        if (filtered.length === 0) {
+          log(`No documents found containing "${searchText}".`, 'info');
+          return;
+        }
+        
+        // Sort by creation date (newest first)
+        const sorted = filtered.sort((a, b) => {
+          const aTime = a.getCreatedAt() || 0;
+          const bTime = b.getCreatedAt() || 0;
+          return bTime - aTime;
+        });
+        
+        log('\nMatching documents:', 'info');
+        sorted.forEach((doc, index) => {
+          log(formatDocument(doc, index));
+        });
+        
+      } catch (error) {
+        log(`\n❌ Error: ${error.message}`, 'error');
+      }
+    }
+
+    // Auto-load documents on page load
+    window.addEventListener('load', () => {
+      waitForExtension();
+    });
+
+    // Allow Enter key in search box
+    document.getElementById('searchText').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        searchDocuments();
+      }
+    });
+  </script>
+</body>
+</html>

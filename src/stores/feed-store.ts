@@ -38,7 +38,7 @@ export const useFeedStore = create<FeedStore>((set, get) => ({
       const newDocuments = await dashService.queryDocuments(
         dataContractId,
         documentType,
-        10
+        50
       )
       
       // Smart merge: only add new documents that don't exist
@@ -55,7 +55,7 @@ export const useFeedStore = create<FeedStore>((set, get) => ({
           const timeB = b.$createdAt || 0
           return timeB - timeA // Newest first
         })
-        .slice(0, 20) // Keep only most recent 20
+        .slice(0, 50) // Keep only most recent 50
       
       console.log(`📊 Documents update: ${freshDocuments.length} new, ${allDocuments.length} total`)
       

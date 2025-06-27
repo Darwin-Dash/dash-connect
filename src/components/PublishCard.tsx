@@ -6,7 +6,13 @@ interface PublishCardProps {
 }
 
 export const PublishCard: React.FC<PublishCardProps> = ({ onPublish }) => {
-  const [message, setMessage] = useState('')
+  // Generate unique default message
+  const getDefaultMessage = () => {
+    const randomNumber = Math.floor(10000 + Math.random() * 90000)
+    return `Hello from Dash Connect - ${randomNumber}`
+  }
+  
+  const [message, setMessage] = useState(getDefaultMessage())
   const [isPublishing, setIsPublishing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showSuccess, setShowSuccess] = useState(false)
@@ -26,7 +32,7 @@ export const PublishCard: React.FC<PublishCardProps> = ({ onPublish }) => {
 
     try {
       const txHash = await onPublish(message.trim())
-      setMessage('')
+      setMessage(getDefaultMessage())
       setLastTxHash(txHash)
       setShowSuccess(true)
       
@@ -48,7 +54,7 @@ export const PublishCard: React.FC<PublishCardProps> = ({ onPublish }) => {
       <div className="absolute -inset-4 bg-gradient-to-r from-green-400 to-blue-400 rounded-3xl blur-3xl opacity-0 group-focus-within:opacity-20 transition duration-500" />
       
       {/* Main card */}
-      <div className="relative rounded-2xl transition-all duration-300 floating-shadow">
+      <div className="relative rounded-2xl transition-all duration-300 floating-shadow" data-testid="publish-form">
         <div className="glass rounded-2xl p-6 sm:p-8">
           <form onSubmit={handleSubmit} className="space-y-4">
             {/* Textarea */}
@@ -119,9 +125,19 @@ export const PublishCard: React.FC<PublishCardProps> = ({ onPublish }) => {
               <div className="text-green-600 dark:text-green-400 text-sm bg-green-50 dark:bg-green-950/20 rounded-lg p-3 border border-green-200 dark:border-green-800 animate-fade-in">
                 <div className="font-medium">Message published successfully! 🎉</div>
                 {lastTxHash && (
-                  <div className="text-xs mt-1 font-mono break-all">
-                    TX: {lastTxHash}
-                  </div>
+                  <>
+                    <div className="text-xs mt-1 font-mono break-all">
+                      TX: {lastTxHash}
+                    </div>
+                    <a
+                      href={`https://testnet.platform-explorer.com/identity/${import.meta.env.VITE_IDENTITY_ID || 'DcoJJ3W9JauwLD51vzNuXJ9vnaZT7mprVm7wbgVYifNq'}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 mt-2 text-xs text-green-700 dark:text-green-300 hover:text-green-800 dark:hover:text-green-200 underline"
+                    >
+                      View on Platform Explorer →
+                    </a>
+                  </>
                 )}
               </div>
             )}

@@ -2,6 +2,8 @@ import { useDashPlatform } from './hooks/useDashPlatform'
 import { FeedList } from './components/FeedList'
 import { NetworkSelector } from './components/NetworkSelector'
 import { WalletIndicator } from './components/WalletIndicator'
+import { ConsoleLogButton } from './components/ConsoleLogButton'
+import { PendingTransactions } from './components/PendingTransactions'
 import { useNetwork } from './contexts/NetworkContext'
 import { Loader2 } from 'lucide-react'
 
@@ -9,7 +11,7 @@ const DOCUMENT_TYPE = 'note'
 
 function App() {
   const { canPublish, isChecking, walletStatus, walletAddress } = useDashPlatform()
-  const { currentNetwork, networkConfig, setNetwork } = useNetwork()
+  const { currentNetwork, networkConfig, setNetwork, refreshIdentity } = useNetwork()
 
   if (isChecking) {
     return (
@@ -53,15 +55,18 @@ function App() {
                   <span className="gradient-text">Dash Connect</span>
                 </h1>
               </div>
-              <div className="flex-1 flex justify-end gap-3">
-                <NetworkSelector 
-                  currentNetwork={currentNetwork}
-                  onNetworkChange={setNetwork}
-                />
-                <WalletIndicator 
-                  status={walletStatus}
-                  walletAddress={walletAddress}
-                />
+              <div className="flex-1 flex justify-end">
+                <div className="flex flex-col gap-3">
+                  <NetworkSelector 
+                    currentNetwork={currentNetwork}
+                    onNetworkChange={setNetwork}
+                  />
+                  <WalletIndicator 
+                    status={walletStatus}
+                    walletAddress={walletAddress}
+                  />
+                  <ConsoleLogButton />
+                </div>
               </div>
             </div>
             
@@ -72,12 +77,19 @@ function App() {
 
           {/* Main content */}
           <main>
-            <div className="animate-slide-up">
+            <div className="animate-slide-up space-y-4">
+              {/* Pending transactions */}
+              <div className="flex justify-center">
+                <PendingTransactions />
+              </div>
+              
+              {/* Feed */}
               <FeedList 
                 dataContractId={networkConfig.dataContractId}
                 documentType={DOCUMENT_TYPE}
                 canPublish={canPublish}
                 networkConfig={networkConfig}
+                refreshIdentity={refreshIdentity}
               />
             </div>
           </main>

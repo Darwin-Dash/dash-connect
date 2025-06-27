@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Simple Dash Platform Publisher</title>
+  <style>
+    body {
+      font-family: -apple-system, system-ui, sans-serif;
+      max-width: 800px;
+      margin: 40px auto;
+      padding: 20px;
+    }
+    .log {
+      background: #f5f5f5;
+      padding: 15px;
+      border-radius: 4px;
+      margin: 10px 0;
+      font-family: monospace;
+      white-space: pre-wrap;
+    }
+    .success { color: green; font-weight: bold; }
+    .error { color: red; }
+    .info { color: blue; }
+    button {
+      background: #5c6bc0;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      font-size: 16px;
+      cursor: pointer;
+      margin: 5px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Simple Dash Platform Publisher</h1>
+  <p>The simplest possible way to publish a message to Dash Platform.</p>
+  
+  <button onclick="publishMessage()">Publish Message</button>
+  <button onclick="verifyMessage()">Verify Last Message</button>
+  <button onclick="clearLog()">Clear</button>
+  
+  <div id="log" class="log">Ready...</div>
+
+  <script>
+    let lastMessage = null;
+    let lastTxHash = null;
+
+    function log(msg, type = '') {
+      const logDiv = document.getElementById('log');
+      const time = new Date().toTimeString().split(' ')[0];
+      const className = type ? ` class="${type}"` : '';
+      logDiv.innerHTML += `\n<span${className}>[${time}] ${msg}</span>`;
+      console.log(msg);
+    }
+
+    function clearLog() {
+      document.getElementById('log').innerHTML = 'Ready...';
+    }
+
+    async function publishMessage() {
+      clearLog();
+      log('Starting simple publish...', 'info');
+      
+      // Check extension
+      const sdk = window.dashPlatformSDK;
+      if (!sdk) {
+        log('❌ Extension not found!', 'error');
+        return;
+      }
+      
+      // Configuration
+      const identityId = 'DcoJJ3W9JauwLD51vzNuXJ9vnaZT7mprVm7wbgVYifNq';
+      const contractId = '5TShWDTorV1TXXBsQ5Xo1zAzYt9w2LstgbcB8J4SKifF';
+      
+      try {
+        // Step 1: Get nonce
+        log('Getting nonce...', 'info');
+        const nonce = await sdk.identities.getIdentityContractNonce(identityId, contractId);
+        log(`Current nonce: ${nonce}`);
+        
+        // Step 2: Create document
+        lastMessage = `Hello Dash! ${Date.now()}`;
+        log(`Creating document with message: "${lastMessage}"`);
+        const doc = await sdk.documents.create(
+          contractId,
+          'note',
+          { message: lastMessage },
+          identityId,
+          nonce + 1n
+        );
+        log('✅ Document created', 'success');
+        
+        // Step 3: Create state transition
+        const st = await sdk.stateTransitions.documentsBatch.create(doc, nonce + 1n);
+        lastTxHash = st.hash(true);
+        log(`✅ State transition created`, 'success');
+        log(`Transaction hash: ${lastTxHash}`);
+        
+        // Step 4: Sign and broadcast (automatic)
+        log('Signing and broadcasting...', 'info');
+        log('Please approve in extension popup!', 'info');
+        await sdk.signer.signStateTransition(st);
+        
+        // Success!
+        log('✅ Transaction signed and broadcast!', 'success');
+        log(`\n🎉 Success! Your message has been published.`, 'success');
+        log(`Transaction: ${lastTxHash}`);
+        log(`\nUse "Verify Last Message" to check if it appears on chain`);
+        
+      } catch (error) {
+        log(`\n❌ Error: ${error.message}`, 'error');
+        
+        if (error.message.includes('ALREADY_EXISTS')) {
+          log('This usually means the nonce was already used.', 'error');
+          log('Try again - it should work with a fresh nonce.', 'info');
+        } else if (error.message.includes('Signature is missing')) {
+          log('The extension could not sign for this identity.', 'error');
+          log('Make sure the extension has the private key imported.', 'error');
+        } else if (error.message.includes('UNAVAILABLE')) {
+          log('Network error - could not connect to Dash Platform.', 'error');
+          log('Please check your internet connection and try again.', 'error');
+        }
+      }
+    }
+
+    async function verifyMessage() {
+      if (!lastMessage) {
+        log('No message to verify. Publish one first!', 'error');
+        return;
+      }
+      
+      log(`\nVerifying message: "${lastMessage}"...`, 'info');
+      
+      const sdk = window.dashPlatformSDK;
+      if (!sdk) {
+        log('Extension not found!', 'error');
+        return;
+      }
+      
+      try {
+        // Query for recent documents
+        const docs = await sdk.documents.query(
+          '5TShWDTorV1TXXBsQ5Xo1zAzYt9w2LstgbcB8J4SKifF',
+          'note',
+          [],
+          null,
+          20
+        );
+        
+        // Look for our message
+        const found = docs.find(d => d.getProperties().message === lastMessage);
+        
+        if (found) {
+          log('✅ Message found on blockchain!', 'success');
+          log(`Document ID: ${found.getId().base58()}`);
+          log(`Created: ${new Date(found.getCreatedAt()).toLocaleString()}`);
+          log(`Owner: ${found.getOwnerId().base58()}`);
+        } else {
+          log('Message not found yet.', 'info');
+          log('It may take a few seconds to appear.', 'info');
+          log('\nRecent messages:', 'info');
+          docs.slice(0, 5).forEach(d => {
+            log(`- "${d.getProperties().message}"`);
+          });
+        }
+      } catch (error) {
+        log(`Error verifying: ${error.message}`, 'error');
+      }
+    }
+  </script>
+</body>
+</html>

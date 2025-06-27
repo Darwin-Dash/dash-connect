@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Intermittent Failure - Dash Connect</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            background-color: #007bff;
+            color: white;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .analytics-button {
+            background-color: #28a745;
+        }
+        .analytics-button:hover {
+            background-color: #218838;
+        }
+        .delay-input {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        input[type="number"] {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            width: 100px;
+        }
+        .log {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            padding: 20px;
+            border-radius: 5px;
+            height: 400px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+        }
+        .success { color: #28a745; }
+        .error { color: #dc3545; }
+        .warning { color: #ffc107; }
+        .info { color: #17a2b8; }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .stat-card {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #333;
+        }
+        .stat-label {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Test Intermittent Failure Pattern</h1>
+        
+        <div class="delay-input">
+            <label for="delay">Delay between requests (seconds):</label>
+            <input type="number" id="delay" value="0" min="0" max="60">
+            <span class="info">Set to 15-30 to avoid rate limiting</span>
+        </div>
+        
+        <div class="controls">
+            <button id="test-single">Test Single Request</button>
+            <button id="test-batch">Test Batch (5 requests)</button>
+            <button id="test-until-failure">Test Until Failure</button>
+            <button id="stop-test">Stop Test</button>
+            <button id="get-analytics" class="analytics-button">Get Analytics</button>
+            <button id="clear-log">Clear Log</button>
+        </div>
+        
+        <div class="stats">
+            <div class="stat-card">
+                <div class="stat-value" id="total-requests">0</div>
+                <div class="stat-label">Total Requests</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="successful-requests">0</div>
+                <div class="stat-label">Successful</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="failed-requests">0</div>
+                <div class="stat-label">Failed</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="success-rate">100%</div>
+                <div class="stat-label">Success Rate</div>
+            </div>
+        </div>
+        
+        <div class="log" id="log"></div>
+    </div>
+
+    <script type="module">
+        import { dashService } from './src/lib/dash-service.js';
+        
+        const log = document.getElementById('log');
+        const totalRequestsEl = document.getElementById('total-requests');
+        const successfulRequestsEl = document.getElementById('successful-requests');
+        const failedRequestsEl = document.getElementById('failed-requests');
+        const successRateEl = document.getElementById('success-rate');
+        
+        let stopFlag = false;
+        let totalRequests = 0;
+        let successfulRequests = 0;
+        let failedRequests = 0;
+        
+        // Test configuration
+        const DATA_CONTRACT_ID = '9jf2T5mLuoEXN2r24w9Kd5MNtJUnoMoB7YtFQNRznem3';
+        const DOCUMENT_TYPE = 'note';
+        const IDENTITY = 'DcoJJ3W9JauwLD51vzNuXJ9vnaZT7mprVm7wbgVYifNq';
+        
+        function addLog(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const colorClass = type;
+            log.innerHTML += `<span class="${colorClass}">[${timestamp}] ${message}</span>\n`;
+            log.scrollTop = log.scrollHeight;
+        }
+        
+        function updateStats() {
+            totalRequestsEl.textContent = totalRequests;
+            successfulRequestsEl.textContent = successfulRequests;
+            failedRequestsEl.textContent = failedRequests;
+            const rate = totalRequests > 0 ? Math.round((successfulRequests / totalRequests) * 100) : 100;
+            successRateEl.textContent = `${rate}%`;
+        }
+        
+        async function delay(seconds) {
+            if (seconds > 0) {
+                addLog(`⏳ Waiting ${seconds} seconds...`, 'info');
+                await new Promise(resolve => setTimeout(resolve, seconds * 1000));
+            }
+        }
+        
+        async function testSingleRequest() {
+            totalRequests++;
+            addLog(`🚀 Starting request #${totalRequests}`, 'info');
+            
+            try {
+                const startTime = Date.now();
+                const txHash = await dashService.createDocument(
+                    DATA_CONTRACT_ID,
+                    DOCUMENT_TYPE,
+                    { message: `Test message #${totalRequests} at ${new Date().toISOString()}` },
+                    IDENTITY
+                );
+                const duration = Date.now() - startTime;
+                
+                successfulRequests++;
+                addLog(`✅ Success! TX: ${txHash} (took ${duration}ms)`, 'success');
+            } catch (error) {
+                failedRequests++;
+                addLog(`❌ Failed: ${error.message || error}`, 'error');
+            }
+            
+            updateStats();
+        }
+        
+        async function testBatch() {
+            addLog('📦 Starting batch test (5 requests)', 'info');
+            stopFlag = false;
+            
+            for (let i = 0; i < 5 && !stopFlag; i++) {
+                await testSingleRequest();
+                
+                if (i < 4 && !stopFlag) {
+                    const delaySeconds = parseInt(document.getElementById('delay').value) || 0;
+                    await delay(delaySeconds);
+                }
+            }
+            
+            addLog('✓ Batch test completed', 'success');
+        }
+        
+        async function testUntilFailure() {
+            addLog('🔄 Testing until failure...', 'info');
+            stopFlag = false;
+            
+            while (!stopFlag) {
+                const beforeFailures = failedRequests;
+                await testSingleRequest();
+                
+                // Stop if we hit a failure
+                if (failedRequests > beforeFailures) {
+                    addLog('🛑 Stopped on failure', 'warning');
+                    break;
+                }
+                
+                const delaySeconds = parseInt(document.getElementById('delay').value) || 0;
+                await delay(delaySeconds);
+            }
+        }
+        
+        function getAnalytics() {
+            addLog('\n📊 Getting Analytics...', 'info');
+            
+            try {
+                const analytics = dashService.getRequestAnalytics();
+                
+                addLog(`\nTotal Requests: ${analytics.totalRequests}`, 'info');
+                addLog(`Success Rate: ${analytics.successRate}%`, 'info');
+                addLog(`Average Request Time: ${analytics.averageRequestTime}ms`, 'info');
+                
+                if (analytics.failurePatterns.length > 0) {
+                    addLog('\n🔍 Failure Patterns:', 'warning');
+                    analytics.failurePatterns.forEach(pattern => {
+                        addLog(`  - ${pattern}`, 'warning');
+                    });
+                }
+                
+                if (analytics.recommendations.length > 0) {
+                    addLog('\n💡 Recommendations:', 'success');
+                    analytics.recommendations.forEach(rec => {
+                        addLog(`  - ${rec}`, 'success');
+                    });
+                }
+            } catch (error) {
+                addLog(`❌ Error getting analytics: ${error.message}`, 'error');
+            }
+        }
+        
+        // Event listeners
+        document.getElementById('test-single').addEventListener('click', testSingleRequest);
+        document.getElementById('test-batch').addEventListener('click', testBatch);
+        document.getElementById('test-until-failure').addEventListener('click', testUntilFailure);
+        document.getElementById('stop-test').addEventListener('click', () => {
+            stopFlag = true;
+            addLog('🛑 Stopping test...', 'warning');
+        });
+        document.getElementById('get-analytics').addEventListener('click', getAnalytics);
+        document.getElementById('clear-log').addEventListener('click', () => {
+            log.innerHTML = '';
+            totalRequests = 0;
+            successfulRequests = 0;
+            failedRequests = 0;
+            updateStats();
+        });
+        
+        // Initialize
+        addLog('🔧 Test tool ready. Make sure the extension is connected.', 'info');
+        addLog('💡 Tip: Set delay to 15-30 seconds to avoid rate limiting', 'info');
+        
+        // Check extension status
+        setTimeout(async () => {
+            const canPublish = dashService.canPublish();
+            if (canPublish) {
+                addLog('✅ Extension detected - ready to test', 'success');
+            } else {
+                addLog('⚠️ Extension not detected - please install and connect', 'warning');
+            }
+        }, 1000);
+    </script>
+</body>
+</html>

@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react'
 import { useFeedStore } from '../stores/feed-store'
+import { useTransactionStore } from '../stores/transaction-store'
 import { useDocuments } from '../hooks/useDocuments'
 import { FeedItem } from './FeedItem'
 import { FeedSkeleton } from './FeedSkeleton'
@@ -8,26 +9,27 @@ import { PublishCard } from './PublishCard'
 import { dashService } from '../lib/dash-service'
 import { FileText, Loader2 } from 'lucide-react'
 
-interface NetworkConfig {
-  dataContractId: string
-  identityId: string
-  blockExplorerUrl: string
-}
-
 interface FeedListProps {
   dataContractId: string
   documentType: string
   canPublish: boolean
-  networkConfig: NetworkConfig
+  networkConfig: {
+    dataContractId: string
+    identityId: string | null
+    blockExplorerUrl: string
+  }
+  refreshIdentity: () => Promise<void>
 }
 
 export const FeedList: React.FC<FeedListProps> = ({ 
   dataContractId, 
   documentType, 
   canPublish, 
-  networkConfig 
+  networkConfig,
+  refreshIdentity 
 }) => {
   const { checkConnection } = useFeedStore()
+  const { addPendingTransaction, updateTransactionStatus } = useTransactionStore()
   const { documents, isLoading, isFetching, newDocumentIds, error, refetch } = useDocuments({
     dataContractId,
     documentType,
@@ -43,8 +45,20 @@ export const FeedList: React.FC<FeedListProps> = ({
       throw new Error('Publishing requires the Dash Platform Extension. Please install and connect the extension.')
     }
 
+    // Add to pending transactions
+    const transactionId = addPendingTransaction(message, 'pending-' + Date.now())
+
     try {
       console.log('📝 Publishing message to blockchain:', message)
+      
+      // Refresh identity before publishing to ensure we have the latest
+      await refreshIdentity()
+      
+      // Check if we have an identity
+      if (!networkConfig.identityId) {
+        updateTransactionStatus(transactionId, 'failed', 'No identity available')
+        throw new Error('No identity available. Please ensure you have an identity selected in the extension.')
+      }
       
       const txHash = await dashService.createDocument(
         networkConfig.dataContractId,
@@ -55,6 +69,9 @@ export const FeedList: React.FC<FeedListProps> = ({
       
       console.log('✅ Message published successfully! Transaction hash:', txHash)
       
+      // Update transaction status to confirmed
+      updateTransactionStatus(transactionId, 'confirmed')
+      
       // Wait a moment for the transaction to propagate, then refresh
       setTimeout(() => {
         refetch()
@@ -63,6 +80,7 @@ export const FeedList: React.FC<FeedListProps> = ({
       return txHash
     } catch (error) {
       console.error('❌ Failed to publish message:', error)
+      updateTransactionStatus(transactionId, 'failed', error instanceof Error ? error.message : 'Failed to publish')
       throw error
     }
   }

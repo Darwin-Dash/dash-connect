@@ -1,12 +1,24 @@
 import { DashPlatformSDK } from 'dash-platform-sdk'
 import type { DashDocument, DashPlatformSDK as ExtensionSDK } from '../types'
+import { DashExtensionAdapter } from './extension-adapter'
 
 type Network = 'testnet' | 'mainnet'
 
 class DashService {
   private readOnlySDK: DashPlatformSDK
   private extensionSDK: ExtensionSDK | null = null
+  private extensionAdapter: DashExtensionAdapter | null = null
   private currentNetwork: Network = 'testnet'
+  
+  // Request tracking for debugging
+  private requestCount = 0
+  private requestHistory: Array<{
+    timestamp: number
+    success: boolean
+    error?: string
+    duration: number
+    nonce?: bigint
+  }> = []
 
   constructor() {
     // Create standalone SDK for reading (public operations)
@@ -19,6 +31,19 @@ class DashService {
   }
 
   private initializeExtensionSDK() {
+    // Check if we're in mock mode first
+    if ((window as any).__mockExtensionEnabled) {
+      console.log('[Mock] Mode is active - using mock extension')
+      // Wait a bit for mock to be fully set up
+      setTimeout(() => {
+        if (window.dashPlatformSDK) {
+          this.extensionSDK = window.dashPlatformSDK
+          console.log('[Mock] Extension SDK initialized')
+        }
+      }, 200)
+      return
+    }
+    
     if (window.dashPlatformSDK) {
       console.log('✅ Extension SDK found - publishing available')
       console.log('🔍 Extension SDK at initialization:', {
@@ -34,6 +59,12 @@ class DashService {
         signerMethods: window.dashPlatformSDK.signer ? Object.keys(window.dashPlatformSDK.signer) : 'no signer'
       })
       this.extensionSDK = window.dashPlatformSDK
+      this.extensionAdapter = new DashExtensionAdapter(window.dashPlatformSDK)
+      
+      // Explore the API in development mode
+      if (import.meta.env.DEV) {
+        this.extensionAdapter.exploreAPI()
+      }
     } else {
       console.log('ℹ️ Extension SDK not found - publishing unavailable')
       this.extensionSDK = null
@@ -50,6 +81,12 @@ class DashService {
     })
     
     console.log(`📡 Network switched to ${network}`)
+  }
+  
+  // Re-check for extension SDK (useful for testing and dynamic loading)
+  reinitializeExtensionSDK(): void {
+    // Always reinitialize, even in mock mode
+    this.initializeExtensionSDK()
   }
 
   // Check if extension is available for publishing
@@ -204,7 +241,7 @@ class DashService {
     }
   }
 
-  // PUBLISHING: Requires extension SDK (private operation) - Enhanced with better error handling
+  // PUBLISHING: Requires extension SDK (private operation) - Simplified to match working HTML file
   async createDocument(
     dataContractId: string,
     documentType: string,
@@ -215,216 +252,456 @@ class DashService {
       throw new Error('Publishing requires the Dash Platform Extension. Please install and connect the extension.')
     }
 
+    const startTime = Date.now()
+    this.requestCount++
+    let nonce: bigint | undefined
+    
     try {
-      console.log('✍️ Creating document (extension SDK):', {
+      console.log('✍️ Creating document (simple approach):', {
         dataContractId,
         documentType,
-        identity
-      })
-
-      // Step 0: Verify extension state before proceeding
-      console.log('🔍 Step 0: Verifying extension state...')
-      const verificationResult = await this.verifyExtensionState()
-      if (!verificationResult.ready) {
-        throw new Error(`Extension not ready: ${verificationResult.error}`)
-      }
-      console.log('✅ Step 0 complete. Extension state verified.')
-
-      console.log('🔍 Step 1: Checking identity balance...')
-      const balance = await this.getIdentityBalance(identity)
-      
-      if (balance === null) {
-        throw new Error('❌ Identity Not Found: The identity does not exist on the network.\n\n📋 Please:\n1. Check that your identity is registered\n2. Verify you\'re on the correct network')
-      }
-      
-      // Minimum balance needed for a transaction (approximate)
-      const MIN_BALANCE = 1000 // Credits needed for a basic transaction
-      
-      if (balance < MIN_BALANCE) {
-        throw new Error(`❌ Insufficient Credits: Your identity has ${balance} credits, but needs at least ${MIN_BALANCE}.\n\n📋 Please:\n1. Top up your identity with credits\n2. Visit a Dash testnet faucet\n3. Wait for credits to confirm`)
-      }
-      
-      console.log(`✅ Step 1 complete. Balance: ${balance} credits`)
-      
-      console.log('🔍 Step 2: Getting identity contract nonce...')
-      const identityContractNonce = await this.extensionSDK.identities.getIdentityContractNonce(
         identity,
-        dataContractId
-      )
-      console.log('✅ Step 2 complete. Nonce:', identityContractNonce)
+        requestNumber: this.requestCount
+      })
       
-      console.log('🔍 Step 3: Creating document...')
-      const document = await this.extensionSDK.documents.create(
+      // Log request pattern
+      console.log(`📊 Request #${this.requestCount} - Recent history:`)
+      this.requestHistory.slice(-5).forEach((req, idx) => {
+        console.log(`  ${idx + 1}. ${req.success ? '✅' : '❌'} ${req.duration}ms ${req.error ? `- ${req.error}` : ''} (nonce: ${req.nonce})`)
+      })
+      
+      // Special warning for requests 4-5 where failures commonly occur
+      if (this.requestCount >= 4 && this.requestCount <= 5) {
+        console.warn(`⚠️ This is request #${this.requestCount} - Failures commonly occur after 3-5 consecutive operations`)
+        console.warn('The extension appears to have a variable rate limit')
+        console.warn('💡 WORKAROUNDS:')
+        console.warn('  1. Add a 30-second delay before this request')
+        console.warn('  2. Refresh the page after 3 successful requests')
+        console.warn('  3. Close and reopen the extension')
+      }
+
+      // Step 1: Get nonce (exactly like HTML file)
+      console.log(`Getting nonce for identity: ${identity}, contract: ${dataContractId}`)
+      nonce = await this.extensionSDK.identities.getIdentityContractNonce(identity, dataContractId)
+      console.log(`Current nonce: ${nonce}`)
+      
+      // Detect nonce reset or stuck nonce
+      if (this.requestHistory.length > 0) {
+        const lastNonce = this.requestHistory[this.requestHistory.length - 1].nonce
+        if (lastNonce && nonce < lastNonce) {
+          console.warn(`⚠️ NONCE RESET DETECTED! Previous: ${lastNonce}, Current: ${nonce}`)
+          console.warn('This might indicate:')
+          console.warn('  - Identity context changed')
+          console.warn('  - Contract context changed')
+          console.warn('  - Extension state was reset')
+          console.warn('  - Different identity being used')
+          
+          // If nonce is very low (1 or 2), this might be a new identity/contract pair
+          if (nonce <= 2n) {
+            console.warn('⚠️ Very low nonce suggests this identity has never or rarely interacted with this contract')
+            console.warn('The extension might not have the private key for this identity/contract combination')
+          }
+        } else if (lastNonce && nonce === lastNonce) {
+          // This might be a false positive if we're comparing the queried nonce
+          // with the nonce we used (which was queried + 1)
+          const lastUsedNonce = lastNonce
+          const currentQueriedNonce = nonce
+          
+          if (currentQueriedNonce === lastUsedNonce - 1n) {
+            // This is expected - the network shows the last confirmed nonce
+            console.log(`✅ Nonce progressing correctly: Last used ${lastUsedNonce}, Current ${currentQueriedNonce}`)
+          } else {
+            console.warn(`⚠️ POTENTIAL NONCE ISSUE: Current nonce ${nonce}, Last used ${lastNonce}`)
+            console.warn('This might indicate:')
+            console.warn('  - Previous transaction is stuck in mempool')
+            console.warn('  - Extension failed to update nonce after last transaction')
+            console.warn('  - Network sync issues')
+          }
+        }
+      }
+      
+      // Step 2: Create document (exactly like HTML file)
+      console.log(`Creating document with data:`, data)
+      const doc = await this.extensionSDK.documents.create(
         dataContractId,
         documentType,
         data,
         identity,
-        identityContractNonce + 1n
+        nonce + 1n
       )
-      console.log('✅ Step 3 complete. Document created.')
+      console.log('✅ Document created')
       
-      console.log('🔍 Step 4: Creating state transition...')
-      const stateTransition = await this.extensionSDK.stateTransitions.documentsBatch.create(
-        document,
-        identityContractNonce + 1n
-      )
-      console.log('✅ Step 4 complete. State transition created.')
+      // Step 3: Create state transition (exactly like HTML file)
+      const st = await this.extensionSDK.stateTransitions.documentsBatch.create(doc, nonce + 1n)
+      const txHash = st.hash(true)
+      console.log('✅ State transition created')
+      console.log(`Transaction hash: ${txHash}`)
       
-      // Step 5: Sign and broadcast the state transition
-      console.log('🔍 Step 5: Signing and broadcasting state transition...')
+      // Step 4: Sign and broadcast with retry logic
+      console.log('Signing and broadcasting...')
+      console.log('Please approve in extension popup!')
       
-      // Pre-signing validation
-      if (!stateTransition || typeof stateTransition.hash !== 'function') {
-        throw new Error('Invalid state transition object created')
-      }
+      // Log extension state before signing
+      console.log('🔍 Extension state check:')
+      console.log('  - Extension exists:', !!window.dashPlatformSDK)
+      console.log('  - Signer exists:', !!window.dashPlatformSDK?.signer)
+      console.log('  - signStateTransition type:', typeof window.dashPlatformSDK?.signer?.signStateTransition)
       
-      // Log state transition details for debugging
-      const stateTransitionHash = stateTransition.hash(true)
-      console.log('📋 State transition details:', {
-        hash: stateTransitionHash,
-        type: stateTransition.constructor?.name || typeof stateTransition,
-        hasToBuffer: typeof stateTransition.toBuffer === 'function',
-        hasToJSON: typeof stateTransition.toJSON === 'function',
-        keys: Object.keys(stateTransition || {}).slice(0, 10) // First 10 keys
-      })
-      
-      // Ensure we're using the window.dashPlatformSDK (not this.extensionSDK)
-      const signer = window.dashPlatformSDK?.signer
-      if (!signer) {
+      // Use direct extension SDK call with retry logic
+      if (!window.dashPlatformSDK?.signer) {
         throw new Error('Extension signer not available')
       }
       
-      // Check which signing method is available (prefer signStateTransition)
-      const hasSignStateTransition = typeof (signer as any).signStateTransition === 'function'
-      const hasSignAndBroadcast = typeof (signer as any).signAndBroadcast === 'function'
+      // Retry logic with exponential backoff
+      const maxRetries = 3
+      let lastError: any = null
       
-      if (!hasSignStateTransition && !hasSignAndBroadcast) {
-        throw new Error('No signing method available in extension')
-      }
-      
-      console.log('📝 Using signing method:', hasSignStateTransition ? 'signStateTransition' : 'signAndBroadcast')
-      
-      // Sign and broadcast with timeout
-      try {
-        console.log('⏳ Waiting for user approval in extension popup...')
-        
-        const SIGNING_TIMEOUT = 120000 // 2 minutes timeout
-        const signingStartTime = Date.now()
-        
-        // Call the appropriate signing method
-        const signingPromise = hasSignStateTransition 
-          ? (signer as any).signStateTransition(stateTransition)
-          : (signer as any).signAndBroadcast(stateTransition)
-        
-        // Create timeout promise
-        const timeoutPromise = new Promise((_, reject) => {
-          setTimeout(() => {
-            reject(new Error('Signing timeout - please complete the extension popup within 2 minutes'))
-          }, SIGNING_TIMEOUT)
-        })
-        
-        // Wait for signing to complete or timeout
-        await Promise.race([signingPromise, timeoutPromise])
-        
-        const signingDuration = Date.now() - signingStartTime
-        console.log(`✅ Step 5 complete. Transaction signed and broadcasted successfully in ${signingDuration}ms`)
-        
-      } catch (signingError) {
-        console.error('❌ Signing failed:', signingError)
-        
-        if (signingError instanceof Error) {
-          const errorMessage = signingError.message.toLowerCase()
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          console.log(`📝 Signing attempt ${attempt}/${maxRetries}...`)
+          await window.dashPlatformSDK.signer.signStateTransition(st)
           
-          // User rejected or cancelled
-          if (errorMessage.includes('rejected') || errorMessage.includes('cancelled') || errorMessage.includes('denied')) {
-            throw new Error('Transaction rejected. You cancelled the transaction in the extension popup.')
+          // Success!
+          console.log('✅ Transaction signed and broadcast!')
+          console.log(`🎉 Success! Your message has been published.`)
+          console.log(`Transaction: ${txHash}`)
+          
+          // Clear error on success
+          lastError = null
+          break
+        } catch (signError) {
+          console.error(`❌ Sign attempt ${attempt} failed:`)
+          if (signError instanceof Error) {
+            console.error('  Message:', signError.message)
+          } else {
+            console.error('  Error:', signError)
           }
           
-          // Timeout
-          if (errorMessage.includes('timeout')) {
-            throw new Error('Request timed out. Please complete the extension popup more quickly.')
+          lastError = signError
+          
+          // Don't retry if user rejected or identity mismatch
+          if (signError instanceof Error && 
+              (signError.message.includes('User rejected') || 
+               signError.message.includes('Signature is missing'))) {
+            throw signError
           }
           
-          // Extension/wallet issues
-          if (errorMessage.includes('no wallet') || errorMessage.includes('wallet is not chosen')) {
-            throw new Error('No wallet selected. Please set up a wallet in the extension first.')
-          }
-          
-          // Signature issues (often indicates insufficient credits)
-          if (errorMessage.includes('invalid state transition signature') || errorMessage.includes('signature is missing')) {
-            throw new Error('Transaction failed. This may be due to insufficient credits or an authentication issue. Please check your identity balance.')
+          // Wait before retry with exponential backoff
+          if (attempt < maxRetries) {
+            const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000)
+            console.log(`⏳ Waiting ${delay}ms before retry...`)
+            await new Promise(resolve => setTimeout(resolve, delay))
           }
         }
-        
-        throw signingError
       }
       
-      // Return the transaction hash (calculated earlier)
-      console.log('✅ Document created successfully!', {
-        txHash: stateTransitionHash,
-        network: this.currentNetwork
+      // If we exhausted all retries, throw the last error
+      if (lastError) {
+        throw lastError
+      }
+      
+      // Track successful request
+      const requestInfo = {
+        timestamp: Date.now(),
+        success: true,
+        duration: Date.now() - startTime,
+        nonce: nonce  // Store the queried nonce, not the used one
+      }
+      this.requestHistory.push(requestInfo)
+      
+      // Log timing analysis
+      if (this.requestHistory.length >= 2) {
+        const timeSinceLastRequest = requestInfo.timestamp - this.requestHistory[this.requestHistory.length - 2].timestamp
+        console.log(`⏱️ Time since last request: ${timeSinceLastRequest}ms`)
+        
+        // Check if requests are happening too quickly
+        if (timeSinceLastRequest < 15000) {
+          console.log('⚡ Rapid request detected (< 15s between requests)')
+          console.log('💡 Consider adding a 15-30 second delay between requests')
+        }
+        
+        // Additional analysis for very rapid requests
+        if (timeSinceLastRequest < 5000) {
+          console.warn('⚠️ VERY rapid request detected (< 5s) - This may trigger rate limits!')
+        }
+      }
+      
+      // Pattern analysis
+      const recentFailures = this.requestHistory.slice(-10).filter(r => !r.success).length
+      if (recentFailures > 0) {
+        console.log(`📊 Recent failure rate: ${recentFailures}/10 requests failed`)
+      }
+      
+      // Keep only last 10 requests
+      if (this.requestHistory.length > 10) {
+        this.requestHistory = this.requestHistory.slice(-10)
+      }
+      
+      return txHash
+    } catch (error) {
+      // Track failed request
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      this.requestHistory.push({
+        timestamp: Date.now(),
+        success: false,
+        error: errorMessage,
+        duration: Date.now() - startTime,
+        nonce: nonce  // Store the queried nonce, not the used one
       })
       
-      return stateTransitionHash
-    } catch (error) {
-      console.error('❌ Error creating document:', error)
+      // Keep only last 10 requests
+      if (this.requestHistory.length > 10) {
+        this.requestHistory = this.requestHistory.slice(-10)
+      }
       
-      // Enhanced error handling with user guidance
+      // Enhanced error logging to capture all details
+      console.error('❌ Error creating document:')
       if (error instanceof Error) {
-        const errorMessage = error.message.toLowerCase()
+        console.error('  Message:', error.message)
+        console.error('  Stack:', error.stack)
+        console.error('  Name:', error.name)
+      } else if (error && typeof error === 'object') {
+        // Log all properties of non-Error objects
+        console.error('  Error object:', JSON.stringify(error, null, 2))
+        console.error('  Error keys:', Object.keys(error))
+        console.error('  Error prototype:', Object.getPrototypeOf(error))
+      } else {
+        console.error('  Raw error:', error)
+      }
+      
+      // Print analytics on failure
+      console.log('\n📊 Request Analytics:')
+      const analytics = this.getRequestAnalytics()
+      console.log(`  Total requests: ${analytics.totalRequests}`)
+      console.log(`  Success rate: ${analytics.successRate}%`)
+      console.log(`  Average request time: ${analytics.averageRequestTime}ms`)
+      
+      if (analytics.failurePatterns.length > 0) {
+        console.log('\n🔍 Failure Patterns Detected:')
+        analytics.failurePatterns.forEach(pattern => {
+          console.log(`  - ${pattern}`)
+        })
+      }
+      
+      if (analytics.recommendations.length > 0) {
+        console.log('\n💡 Recommendations:')
+        analytics.recommendations.forEach(rec => {
+          console.log(`  - ${rec}`)
+        })
+      }
+      
+      if (error instanceof Error) {
+        const errorMessage = error.message
         
-        // Extension/wallet setup issues
-        if (errorMessage.includes('extension not installed')) {
-          throw new Error('❌ Extension Required: Please install the Dash Platform Extension from Chrome Web Store and reload this page.')
-        }
-        
-        if (errorMessage.includes('extension not ready') || errorMessage.includes('api not available')) {
-          throw new Error('❌ Extension Error: Extension is not ready. Please reload the extension or restart your browser.')
-        }
-        
-        // Wallet/identity issues
-        if (errorMessage.includes('no wallet') || errorMessage.includes('wallet is not chosen')) {
-          throw new Error('❌ No Wallet: Please set up a wallet in the extension first.\n\n📋 Steps:\n1. Click the extension icon in your browser\n2. Create or import a wallet\n3. Add an identity\n4. Try publishing again')
-        }
-        
-        if (errorMessage.includes('no identity') || errorMessage.includes('identity') && errorMessage.includes('not found')) {
-          throw new Error('❌ No Identity: Please add an identity to your wallet in the extension.\n\n📋 Steps:\n1. Open the extension popup\n2. Import or create an identity\n3. Try publishing again')
-        }
-        
-        // Signing process issues
-        if (errorMessage.includes('signature is missing')) {
-          throw new Error('❌ Signing Incomplete: The extension popup was not completed properly.\n\n📋 Please:\n1. Ensure you clicked "Approve" in the popup\n2. Enter your password correctly\n3. Wait for the confirmation\n4. Try again if needed')
-        }
-        
-        // Insufficient credits (often shows as "Invalid State Transition signature")
-        if (errorMessage.includes('invalid state transition signature')) {
-          throw new Error('❌ Transaction Failed: This could be due to insufficient credits or key mismatch.\n\n📋 Please check:\n1. Your identity has enough credits (top up if needed)\n2. You\'re using the correct identity\n3. The identity is registered on this network')
-        }
-        
-        if (errorMessage.includes('timeout')) {
-          throw new Error('❌ Timeout: Request timed out waiting for approval.\n\n📋 Please:\n1. Try again with a shorter message\n2. Complete the extension popup more quickly\n3. Check your internet connection')
-        }
-        
-        if (errorMessage.includes('rejected') || errorMessage.includes('cancelled')) {
-          throw new Error('❌ Transaction Rejected: You rejected the transaction in the extension popup. Click "Approve" to publish your message.')
-        }
-        
-        // Network/connection issues
-        if (errorMessage.includes('network') || errorMessage.includes('connection')) {
-          throw new Error('❌ Network Error: Unable to connect to Dash Platform.\n\n📋 Please:\n1. Check your internet connection\n2. Try again in a few moments\n3. Verify you\'re on the correct network (testnet)')
-        }
-        
-        // Generic extension issues
-        if (errorMessage.includes('failed to decrypt') || errorMessage.includes('password')) {
-          throw new Error('❌ Password Error: Incorrect password or wallet is locked.\n\n📋 Please:\n1. Open the extension popup\n2. Unlock your wallet with the correct password\n3. Try publishing again')
+        if (errorMessage.includes('ALREADY_EXISTS')) {
+          throw new Error('This usually means the nonce was already used. Try again - it should work with a fresh nonce.')
+        } else if (errorMessage.includes('Signature is missing')) {
+          throw new Error('The extension could not sign for this identity. Make sure the extension has the private key imported.')
+        } else if (errorMessage.includes('UNAVAILABLE')) {
+          throw new Error('Network error - could not connect to Dash Platform. Please check your internet connection and try again.')
         }
       }
       
-      // Fallback error message
-      throw new Error(`❌ Publishing Failed: ${error instanceof Error ? error.message : String(error)}\n\n💡 Try opening the extension popup to check your wallet status and ensure you have an identity with sufficient credits.`)
+      throw error
     }
   }
   
+  // Debug method to explore extension API
+  exploreExtensionAPI(): void {
+    if (!this.extensionSDK) {
+      console.log('❌ No extension SDK available')
+      return
+    }
+
+    console.log('🔍 Exploring Extension API...')
+    const ext = this.extensionSDK as any
+    
+    // Log top-level properties
+    console.log('📋 Top-level properties:', Object.keys(ext))
+    
+    // Check identities API
+    if (ext.identities) {
+      console.log('📋 Identities API:', Object.keys(ext.identities))
+      console.log('  - getIdentityContractNonce:', typeof ext.identities.getIdentityContractNonce)
+      console.log('  - getBalance:', typeof ext.identities.getBalance)
+      console.log('  - get:', typeof ext.identities.get)
+      console.log('  - getIdentities:', typeof ext.identities.getIdentities)
+      console.log('  - getCurrentIdentity:', typeof ext.identities.getCurrentIdentity)
+    }
+    
+    // Check wallet API
+    if (ext.wallet) {
+      console.log('📋 Wallet API:', Object.keys(ext.wallet))
+    }
+    
+    // Check signer API
+    if (ext.signer) {
+      console.log('📋 Signer API:', Object.keys(ext.signer))
+      console.log('  - signStateTransition:', typeof ext.signer.signStateTransition)
+      console.log('  - signAndBroadcast:', typeof ext.signer.signAndBroadcast)
+      console.log('  - publicAPIClient:', typeof ext.signer.publicAPIClient)
+    }
+    
+    // Check documents API
+    if (ext.documents) {
+      console.log('📋 Documents API:', Object.keys(ext.documents))
+      console.log('  - create:', typeof ext.documents.create)
+    }
+    
+    // Check state transitions API
+    if (ext.stateTransitions) {
+      console.log('📋 State Transitions API:', Object.keys(ext.stateTransitions))
+      if (ext.stateTransitions.documentsBatch) {
+        console.log('  - documentsBatch:', Object.keys(ext.stateTransitions.documentsBatch))
+      }
+    }
+  }
+
+  // Get available identities from extension
+  async getAvailableIdentities(): Promise<string[]> {
+    try {
+      // Check if extension has a method to get identities
+      if (!this.extensionSDK) {
+        console.log('❌ Extension not available for getting identities')
+        return []
+      }
+
+      // Try different methods the extension might expose
+      const ext = this.extensionSDK as any
+      
+      // Method 1: Check if there's a getIdentities method
+      if (typeof ext.identities?.getIdentities === 'function') {
+        console.log('🔍 Getting identities via getIdentities()')
+        const identities = await ext.identities.getIdentities()
+        return identities.map((id: any) => 
+          typeof id === 'string' ? id : id.getId?.()?.toString() || id.toString()
+        )
+      }
+      
+      // Method 2: Check if there's a wallet API
+      if (typeof ext.wallet?.getIdentities === 'function') {
+        console.log('🔍 Getting identities via wallet.getIdentities()')
+        const identities = await ext.wallet.getIdentities()
+        return identities.map((id: any) => 
+          typeof id === 'string' ? id : id.getId?.()?.toString() || id.toString()
+        )
+      }
+      
+      // Method 3: Check localStorage or extension storage
+      // This is a fallback - real extension might store current identity differently
+      console.log('⚠️ No identity API found in extension')
+      return []
+      
+    } catch (error) {
+      console.error('❌ Error getting identities from extension:', error)
+      return []
+    }
+  }
+
+  // Get current active identity from extension
+  async getCurrentIdentity(): Promise<string | null> {
+    try {
+      if (!this.extensionAdapter) {
+        return null
+      }
+
+      return await this.extensionAdapter.getCurrentIdentity()
+    } catch (error) {
+      console.error('❌ Error getting current identity:', error)
+      return null
+    }
+  }
+  
+  // Get request analytics for debugging
+  getRequestAnalytics(): {
+    totalRequests: number
+    successRate: number
+    averageRequestTime: number
+    failurePatterns: string[]
+    recommendations: string[]
+  } {
+    if (this.requestHistory.length === 0) {
+      return {
+        totalRequests: 0,
+        successRate: 100,
+        averageRequestTime: 0,
+        failurePatterns: [],
+        recommendations: []
+      }
+    }
+    
+    const successfulRequests = this.requestHistory.filter(r => r.success)
+    const failedRequests = this.requestHistory.filter(r => !r.success)
+    const successRate = (successfulRequests.length / this.requestHistory.length) * 100
+    const avgTime = successfulRequests.reduce((sum, r) => sum + r.duration, 0) / (successfulRequests.length || 1)
+    
+    const patterns: string[] = []
+    const recommendations: string[] = []
+    
+    // Check for pattern of failures after 3-5 requests
+    const failurePositions = this.requestHistory
+      .map((r, i) => ({ ...r, position: i + 1 }))
+      .filter(r => !r.success)
+      .map(r => r.position)
+    
+    if (failurePositions.length > 0) {
+      const positions = failurePositions.join(', ')
+      const commonPositions = failurePositions.filter(p => p >= 4 && p <= 5)
+      
+      if (commonPositions.length > 0) {
+        patterns.push(`Failures occur after 3-5 consecutive requests (positions: ${positions})`)
+        recommendations.push('The extension has a variable limit of 3-5 consecutive operations')
+        recommendations.push('Add a 30-second delay between requests to avoid the limit')
+        recommendations.push('Or refresh the page after 3 successful requests to be safe')
+      }
+    }
+    
+    // Check for rapid request issues
+    const rapidRequests = this.requestHistory
+      .slice(1)
+      .map((r, i) => ({
+        request: r,
+        timeSincePrevious: r.timestamp - this.requestHistory[i].timestamp
+      }))
+      .filter(r => r.timeSincePrevious < 5000)
+    
+    if (rapidRequests.some(r => !r.request.success)) {
+      patterns.push('Failures occur with rapid requests (< 5s apart)')
+      recommendations.push('Add a 15-30 second delay between requests')
+      recommendations.push('The extension may have rate limiting protection')
+    }
+    
+    // Check for nonce issues
+    const nonceResets = this.requestHistory
+      .slice(1)
+      .filter((r, i) => r.nonce && this.requestHistory[i].nonce && r.nonce < this.requestHistory[i].nonce!)
+    
+    if (nonceResets.length > 0) {
+      patterns.push('Nonce resets detected')
+      recommendations.push('The extension may be switching identities or losing state')
+      recommendations.push('Verify the correct identity is imported in the extension')
+    }
+    
+    // Check for consistent error messages
+    const errorMessages = failedRequests
+      .map(r => r.error)
+      .filter((e): e is string => !!e)
+    
+    if (errorMessages.every(e => e.includes('Signature is missing'))) {
+      patterns.push('All failures are "Signature is missing" errors')
+      recommendations.push('The extension cannot sign for this identity')
+      recommendations.push('Check that the private key for this identity is imported')
+    }
+    
+    return {
+      totalRequests: this.requestHistory.length,
+      successRate: Math.round(successRate),
+      averageRequestTime: Math.round(avgTime),
+      failurePatterns: patterns,
+      recommendations
+    }
+  }
+
   // Check identity balance (public operation - uses read-only SDK)
   async getIdentityBalance(identityId: string): Promise<number | null> {
     try {
